@@ -48,7 +48,7 @@ fn main() -> Result<()> {
         .get_matches();
 
     let config_dir = dirs::home_dir()
-        .map(|p| p.join(".eph"))
+        .map(|p| p.join(".config/eph"))
         .expect("Could not find home directory");
     fs::create_dir_all(&config_dir)?;
 
@@ -59,7 +59,9 @@ fn main() -> Result<()> {
     let script_dir = if let Some(dir) = &config.script_dir {
         PathBuf::from(dir)
     } else {
-        config_dir.join("scripts")
+        dirs::home_dir()
+            .map(|p| p.join(".eph"))
+            .expect("Could not find home directory")
     };
     fs::create_dir_all(&script_dir)?;
 
