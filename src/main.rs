@@ -9,8 +9,14 @@ use std::process::{Command as ProcessCommand, Stdio};
 
 fn main() -> Result<()> {
     let matches = Command::new("eph")
-        .version("1.0")
         .about("Manage and run ephemeral scripts")
+        .arg(
+            Arg::new("list")
+                .short('l')
+                .long("list")
+                .help("List all scripts")
+                .action(ArgAction::SetTrue),
+        )
         .arg(
             Arg::new("edit")
                 .short('e')
@@ -57,7 +63,9 @@ fn main() -> Result<()> {
     };
     fs::create_dir_all(&script_dir)?;
 
-    if let Some(script_name) = matches.get_one::<String>("edit") {
+    if matches.get_flag("list") {
+        list_scripts(&script_dir)?;
+    } else if let Some(script_name) = matches.get_one::<String>("edit") {
         edit_script(script_dir, script_name, &config)?;
     } else if let Some(script_name) = matches.get_one::<String>("new") {
         create_script(script_dir, script_name, &config)?;
@@ -160,5 +168,34 @@ fn open_in_editor(script_path: PathBuf, config: &Config) -> Result<()> {
     if !status.success() {
         eprintln!("Editor exited with status: {}", status);
     }
+    Ok(())
+}
+
+fn list_scripts(script_dir: &PathBuf) -> Result<()> {
+    let mut scripts = Vec::new();
+
+    for entry in fs::read_dir(script_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_file() {
+            if let Some(file_name) = path.file_name() {
+                if let Some(name_str) = file_name.to_str() {
+                    if !name_str.starts_with('.') && name_str != "trash" {
+                        scripts.push(name_str.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    if scripts.is_empty() {
+        println!("No scripts found.");
+    } else {
+        println!("Available scripts:");
+        for script in scripts {
+            println!("- {}", script);
+        }
+    }
+
     Ok(())
 }
