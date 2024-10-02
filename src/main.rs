@@ -1,9 +1,10 @@
 use clap::{Arg, ArgAction, Command};
+use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
-use std::io::Result;
+use std::io::{Result, Write};
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 
 fn main() -> Result<()> {
@@ -40,22 +41,33 @@ fn main() -> Result<()> {
         )
         .get_matches();
 
-    let script_dir = dirs::home_dir()
+    let config_dir = dirs::home_dir()
         .map(|p| p.join(".eph"))
         .expect("Could not find home directory");
+    fs::create_dir_all(&config_dir)?;
+
+    let config_file_path = config_dir.join("config.toml");
+
+    let config = load_or_create_config(&config_file_path)?;
+
+    let script_dir = if let Some(dir) = &config.script_dir {
+        PathBuf::from(dir)
+    } else {
+        config_dir.join("scripts")
+    };
     fs::create_dir_all(&script_dir)?;
 
     if let Some(script_name) = matches.get_one::<String>("edit") {
-        edit_script(script_dir, script_name)?;
+        edit_script(script_dir, script_name, &config)?;
     } else if let Some(script_name) = matches.get_one::<String>("new") {
-        create_script(script_dir, script_name)?;
+        create_script(script_dir, script_name, &config)?;
     } else if let Some(script_name) = matches.get_one::<String>("delete") {
         delete_script(script_dir, script_name)?;
     } else if let Some(script_name) = matches.get_one::<String>("script") {
         let script_args: Vec<&String> = matches
             .get_many::<String>("args")
             .map_or(vec![], |vals| vals.collect());
-        run_script(script_dir, script_name, script_args.as_slice())?;
+        run_script(script_dir, script_name, &script_args)?;
     } else {
         eprintln!("No valid command provided. Use --help for usage.");
     }
@@ -63,16 +75,39 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn edit_script(script_dir: PathBuf, script_name: &str) -> Result<()> {
+#[derive(Serialize, Deserialize)]
+struct Config {
+    editor: Option<String>,
+    script_dir: Option<String>,
+}
+
+fn load_or_create_config(config_file_path: &Path) -> Result<Config> {
+    if config_file_path.exists() {
+        let contents = fs::read_to_string(config_file_path)?;
+        let config: Config = toml::from_str(&contents)?;
+        Ok(config)
+    } else {
+        let default_config = Config {
+            editor: Some("nano".to_string()),
+            script_dir: None,
+        };
+        let toml_string = toml::to_string_pretty(&default_config).unwrap();
+        let mut file = fs::File::create(config_file_path)?;
+        file.write_all(toml_string.as_bytes())?;
+        Ok(default_config)
+    }
+}
+
+fn edit_script(script_dir: PathBuf, script_name: &str, config: &Config) -> Result<()> {
     let script_path = script_dir.join(script_name);
     if !script_path.exists() {
         eprintln!("Script does not exist. Use -n to create a new script.");
         return Ok(());
     }
-    open_in_editor(&script_path)
+    open_in_editor(script_path, config)
 }
 
-fn create_script(script_dir: PathBuf, script_name: &str) -> Result<()> {
+fn create_script(script_dir: PathBuf, script_name: &str, config: &Config) -> Result<()> {
     let script_path = script_dir.join(script_name);
     if script_path.exists() {
         eprintln!("Script already exists. Use -e to edit.");
@@ -82,7 +117,7 @@ fn create_script(script_dir: PathBuf, script_name: &str) -> Result<()> {
     let mut perms = fs::metadata(&script_path)?.permissions();
     perms.set_mode(0o755);
     fs::set_permissions(&script_path, perms)?;
-    open_in_editor(&script_path)
+    open_in_editor(script_path, config)
 }
 
 fn delete_script(script_dir: PathBuf, script_name: &str) -> Result<()> {
@@ -119,8 +154,8 @@ fn run_script(script_dir: PathBuf, script_name: &str, args: &[&String]) -> Resul
     Ok(())
 }
 
-fn open_in_editor(script_path: &PathBuf) -> Result<()> {
-    let editor = env::var("EDITOR").unwrap_or_else(|_| "hx".to_string());
+fn open_in_editor(script_path: PathBuf, config: &Config) -> Result<()> {
+    let editor = config.editor.clone().unwrap_or_else(|| "nano".to_string());
     let status = ProcessCommand::new(editor).arg(script_path).status()?;
     if !status.success() {
         eprintln!("Editor exited with status: {}", status);
